@@ -1,5 +1,6 @@
 var State = require('./lib/state')
 var tokenize = require('./lib/tokenize')
+const  util = require('util')
 
 var tokenizedCache = {}
 
@@ -52,11 +53,41 @@ function handleQuery (tokens, options, params) {
     }
   }
 
+  var v = state.currentItem
+
+  if (state.multipleGroups.length > 0 && state.multipleParents.length > 0) {
+    state.multipleParents.push(state.currentParents)
+    state.multipleGroups.push(state.currentGroup)
+
+    var boolOpList = state.multipleGroups.map(function(x){
+      if (Array.isArray(x)) {
+        return x[x.length - 1].value
+      }
+      return x
+    })
+    console.log(util.inspect(boolOpList, false, null))
+    var vSet = new Set(boolOpList[0])
+    for (var i = 1; i < boolOpList.length; i++) {
+      if (boolOpList[i] === '&') {
+        vSet = new Set([...vSet].filter(x => new Set(boolOpList[i++]).has(x)))
+      }
+      else if (boolOpList[i] === '|') {
+        vSet = new Set([...vSet, boolOpList[i++]])
+      }
+    }
+    console.log(vSet)
+  }
+  
+
+
   return {
     value: state.currentItem,
     key: state.currentKey,
     references: state.currentReferences,
-    parents: state.currentParents
+    parents: state.currentParents,
+    groups: state.currentGroup,
+    multipleParents: state.multipleParents,
+    multipleGroups: state.multipleGroups
   }
 }
 
@@ -98,7 +129,7 @@ function handleToken (token, state) {
 
           values = Array.prototype.concat.apply([], values) // flatten
 
-          state.setCurrent(key, values)
+          state.setCurrent(key, values, {deepAccess: true})
         } else {
           state.setCurrent(key, state.currentItem[key])
         }
@@ -137,17 +168,20 @@ function handleToken (token, state) {
       if (token.multiple) {
         var keys = []
         var value = []
+        var index = []
         state.currentItem.forEach(function (item, i) {
           if (matches(item, match)) {
+            index.push(state.currentItem.indexOf(item))
             keys.push(i)
             value.push(item)
           }
         })
-        state.setCurrent(keys, value)
+        state.setCurrent(keys, value, {index: index})
       } else {
         if (!state.currentItem.some(function (item, i) {
           if (matches(item, match)) {
-            state.setCurrent(i, item)
+            var index = state.currentItem.indexOf(item)
+            state.setCurrent(i, item, {index: [index]})
             return true
           }
         })) {
@@ -174,7 +208,13 @@ function handleToken (token, state) {
       state.resetCurrent()
       state.setCurrent(null, state.context)
     }
-  } else if (token.filter) {
+  } else if(token.and){
+    state.multipleParents.push(state.currentParents)
+    state.multipleParents.push('&')
+    state.multipleGroups.push(state.currentGroup)
+    state.multipleGroups.push('&')
+    state.resetCurrent()
+  }else if (token.filter) {
     var helper = state.getLocal(token.filter) || state.getGlobal(token.filter)
     if (typeof helper === 'function') {
       // function(input, args...)
@@ -251,8 +291,8 @@ function matches (item, parts) {
       result = r
     }
   }
-
   return result
+
 }
 
 function isDefined(value) {
